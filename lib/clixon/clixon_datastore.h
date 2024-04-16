@@ -55,7 +55,7 @@ struct db_elmnt {
                                  * reset by commit, discard
                                  */
     int            de_empty;    /* Empty on read from file, xmldb_readfile and xmldb_put sets it */
-    int            de_volatile; /* Do not sync to disk on every update (ie xmldb_put) */
+    int            de_volatile; /* Disable auto-sync of cache to disk on every update (ie xmldb_put) */
 };
 typedef struct db_elmnt db_elmnt;
 
@@ -66,6 +66,7 @@ typedef struct db_elmnt db_elmnt;
 db_elmnt *clicon_db_elmnt_get(clixon_handle h, const char *db);
 int clicon_db_elmnt_set(clixon_handle h, const char *db, db_elmnt *xc);
 int xmldb_db2file(clixon_handle h, const char *db, char **filename);
+int xmldb_db2subdir(clixon_handle h, const char *db, char **dir);
 
 /* API */
 int xmldb_connect(clixon_handle h);
@@ -98,6 +99,7 @@ int xmldb_volatile_set(clixon_handle h, const char *db, int value);
 int xmldb_print(clixon_handle h, FILE *f);
 int xmldb_rename(clixon_handle h, const char *db, const char *newdb, const char *suffix);
 int xmldb_populate(clixon_handle h, const char *db);
+int xmldb_write_cache2file_multi(clixon_handle h, const char *db);
 int xmldb_write_cache2file(clixon_handle h, const char *db);
 int xmldb_dump(clixon_handle h, FILE *f, cxobj *xt, withdefaults_type wdef);
 

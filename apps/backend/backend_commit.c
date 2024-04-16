@@ -295,8 +295,7 @@ startup_common(clixon_handle       h,
     xt = NULL;
     x = NULL;
     while ((x = xml_child_each(td->td_target, x, CX_ELMNT)) != NULL){
-        xml_flag_set(x, XML_FLAG_ADD); /* Also down */
-        xml_apply(x, CX_ELMNT, (xml_applyfn_t*)xml_flag_set, (void*)XML_FLAG_ADD);
+        xml_apply0(x, CX_ELMNT, (xml_applyfn_t*)xml_flag_set, (void*)XML_FLAG_ADD);
         if (cxvec_append(x, &td->td_avec, &td->td_alen) < 0)
             goto done;
     }
@@ -496,8 +495,17 @@ validate_common(clixon_handle       h,
     if (xmldb_cache_get(h, db) != NULL){
         if (xmldb_populate(h, db) < 0)
             goto done;
+#ifdef DATASTORE_MULTIPLE
+        if (strcmp("json", clicon_option_str(h, "CLICON_XMLDB_FORMAT")) == 0){ // XXX JSON
+            if (xmldb_write_cache2file(h, db) < 0)
+                goto done;
+        }
+        else if (xmldb_write_cache2file_multi(h, db) < 0)
+            goto done;
+#else
         if (xmldb_write_cache2file(h, db) < 0)
             goto done;
+#endif
     }
     /* This is the state we are going to */
     if ((ret = xmldb_get0(h, db, YB_MODULE, NULL, "/", 0, 0, &td->td_target, NULL, xret)) < 0)

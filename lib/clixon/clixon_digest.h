@@ -33,17 +33,11 @@
 
   ***** END LICENSE BLOCK *****
 
-  * This file requires dirent.h
  */
 
-#ifndef _CLIXON_FILE_H_
-#define _CLIXON_FILE_H_
+#ifndef _CLIXON_DIGEST_H_
+#define _CLIXON_DIGEST_H_
 
-int clicon_file_dirent(const char *dir, struct dirent **ent,
-                       const char *regexp, mode_t type);
-int clicon_files_recursive(const char *dir, const char *regexp, cvec *cvv);
-int clicon_file_copy(char *src, char *target);
-int clicon_dir_copy(char *src, char *target);
-int clicon_file_cbuf(const char *filename, cbuf *cb);
+int clixon_digest_hex(const char *string, char **hexstrp);
 
-#endif /* _CLIXON_FILE_H_ */
+#endif /* _CLIXON_DIGEST_H_ */

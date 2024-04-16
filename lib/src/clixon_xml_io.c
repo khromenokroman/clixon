@@ -52,6 +52,9 @@
 #include <errno.h>
 #include <string.h>
 #include <limits.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 /* cligen */
 #include <cligen/cligen.h>
@@ -60,6 +63,7 @@
 #include "clixon_string.h"
 #include "clixon_queue.h"
 #include "clixon_hash.h"
+#include "clixon_digest.h"
 #include "clixon_handle.h"
 #include "clixon_yang.h"
 #include "clixon_xml.h"
@@ -68,6 +72,7 @@
 #include "clixon_debug.h"
 #include "clixon_options.h"
 #include "clixon_yang_module.h"
+#include "clixon_yang_schema_mount.h"
 #include "clixon_xml_bind.h"
 #include "clixon_xml_vec.h"
 #include "clixon_xml_sort.h"
@@ -75,6 +80,9 @@
 #include "clixon_xml_parse.h"
 #include "clixon_netconf_lib.h"
 #include "clixon_xml_default.h"
+#include "clixon_xpath_ctx.h"
+#include "clixon_xpath.h"
+#include "clixon_datastore.h"
 #include "clixon_xml_io.h"
 
 /*
@@ -398,6 +406,329 @@ clixon_xml2file1(FILE                *f,
  done:
     return retval;
 }
+
+#ifdef DATASTORE_MULTIPLE
+
+/*! Split XML data into a new file
+ *
+ * Get name of new file, open it and add that as a link in the original file,
+ * @param[in]   h      Clixon handle
+ * @param[in]   db     Datastore
+ * @param[in]   f      Open file
+ * @param[in]   x      Clixon xml tree
+ * @param[in]   fn     Callback to make print function
+ * @param[out]  fsub   Open file of new file
+ * @retval      0      OK
+ * @retval     -1      Error
+ */
+static int
+xml2file_split_subfile(clixon_handle     h,
+                       const char       *db,
+                       FILE             *f,
+                       cxobj            *x,
+                       clicon_output_cb *fn,
+                       FILE            **fsub)
+{
+    int    retval = -1;
+    char  *xpath = NULL;
+    cbuf  *cb = NULL;
+    char  *subdir = NULL;
+    char  *dbfile;
+    char  *hexstr = NULL;
+    int    fd = -1;
+    struct stat st = {0,};
+
+    if (xml2xpath(x, NULL, 1, 0, &xpath) < 0)
+        goto done;
+    if (clixon_digest_hex(xpath, &hexstr) < 0)
+        goto done;
+    if (xmldb_db2subdir(h, db, &subdir) < 0)
+        goto done;
+    if ((cb = cbuf_new()) == NULL){
+        clixon_err(OE_XML, errno, "cbuf_new");
+        goto done;
+    }
+    cprintf(cb, "%s/%s.xml", subdir, hexstr);
+    dbfile = cbuf_get(cb);
+    (*fn)(f, " xmlns:%s=\"%s\"", CLIXON_LIB_PREFIX, CLIXON_LIB_NS);
+    (*fn)(f, " %s:link=\"%s.xml\"", CLIXON_LIB_PREFIX, hexstr);
+    /* Write file if dirty OR does not exist */
+    if (xml_flag(x, XML_FLAG_CACHE_DIRTY) ||
+        lstat(dbfile, &st) < 0){
+        fprintf(stderr, "%s Open: %s for writing", __FUNCTION__, dbfile);
+        if ((fd = open(dbfile, O_CREAT|O_WRONLY|O_TRUNC, S_IRWXU)) < 0) {
+            clixon_err(OE_UNIX, errno, "open(%s)", dbfile);
+            goto done;
+        }
+        if ((*fsub = fdopen(fd, "w")) == NULL){
+            clixon_err(OE_CFG, errno, "fdopen(%s)", dbfile);
+            goto done;
+        }
+    }
+    retval = 0;
+ done:
+    if (cb)
+        cbuf_free(cb);
+    if (xpath)
+        free(xpath);
+    if (subdir)
+        free(subdir);
+    if (hexstr)
+        free(hexstr);
+    return retval;
+}
+
+/*! Print an XML tree structure to multiple files in a directory structure and encode chars "<>&"
+ *
+ * @param[in]   h          Clixon handle
+ * @param[in]   db         Datastore
+ * @param[in]   f          Open file
+ * @param[in]   x          Clixon xml tree
+ * @param[in]   level      How many spaces to insert before each line
+ * @param[in]   pretty     Insert \n and spaces to make the xml more readable.
+ * @param[in]   prefix     Add string to beginning of each line (if pretty)
+ * @param[in]   fn         Callback to make print function
+ * @param[in]   autocliext How to handle autocli extensions: 0: ignore 1: follow
+ * @param[in]   wdef       With-defaults parameter, default is WITHDEFAULTS_REPORT_ALL
+ * @retval      0          OK
+ * @retval     -1          Error
+ * One can use clixon_xml2cbuf to get common code, but using fprintf is
+ * much faster than using cbuf and then printing that,...
+ * wdef changes the output as follows:
+ * - WITHDEFAULTS_REPORT_ALL        - keep as-is
+ * - WITHDEFAULTS_TRIM              - remove defaults + equal value, and no-presence
+ * - WITHDEFAULTS_EXPLICIT          - remove defaults and no-presence
+ * - WITHDEFAULTS_REPORT_ALL_TAGGED
+ * @see xml2cbuf_recurse  same with cbuf
+ */
+static int
+xml2file_recurse_multi(clixon_handle        h,
+                       const char          *db,
+                       FILE                *f,
+                       cxobj               *x,
+                       int                  level,
+                       int                  pretty,
+                       char                *prefix,
+                       clicon_output_cb    *fn,
+                       int                  autocliext,
+                       withdefaults_type    wdef)
+{
+    int           retval = -1;
+    char         *name;
+    char         *namespace;
+    cxobj        *xc;
+    int           hasbody;
+    int           haselement;
+    char         *val;
+    char         *encstr = NULL; /* xml encoded string */
+    int           exist = 0;
+    yang_stmt    *y;
+    int           level1;
+    int           tag = 0;
+    int           ret;
+    int           subfile = 0;   /* File is split into subfile */
+    FILE         *fsub = NULL; /* New subfile */
+
+    if (x == NULL)
+        goto ok;
+    level1 = level*PRETTYPRINT_INDENT;
+    if (prefix)
+        level1 -= strlen(prefix);
+    if ((y = xml_spec(x)) != NULL){
+        if (autocliext){
+            if (yang_extension_value(y, "hide-show", CLIXON_AUTOCLI_NS, &exist, NULL) < 0)
+                goto done;
+            if (exist)
+                goto ok;
+        }
+        if ((ret = xml2output_wdef(x, wdef, &tag)) < 0)
+            goto done;
+        if (ret == 0)
+            goto ok;
+    }
+    name = xml_name(x);
+    namespace = xml_prefix(x);
+    switch(xml_type(x)){
+    case CX_BODY:
+        if ((val = xml_value(x)) == NULL) /* incomplete tree */
+            break;
+        if (xml_chardata_encode(&encstr, "%s", val) < 0)
+            goto done;
+        (*fn)(f, "%s", encstr);
+        break;
+    case CX_ATTR:
+        (*fn)(f, " ");
+        if (namespace)
+            (*fn)(f, "%s:", namespace);
+        (*fn)(f, "%s=\"%s\"", name, xml_value(x));
+        break;
+    case CX_ELMNT:
+        if (pretty && prefix)
+            (*fn)(f, "%s", prefix);
+        (*fn)(f, "%*s<", pretty?level1:0, "");
+        if (namespace)
+            (*fn)(f, "%s:", namespace);
+        (*fn)(f, "%s", name);
+        if (tag) /* If default and WITHDEFAULTS_REPORT_ALL_TAGGED */
+            (*fn)(f, " wd:default=\"true\"");
+        hasbody = 0;
+        haselement = 0;
+        xc = NULL;
+        /* print attributes only */
+        while ((xc = xml_child_each(x, xc, -1)) != NULL) {
+            switch (xml_type(xc)){
+            case CX_ATTR:
+                if (xml2file_recurse_multi(h, db, f, xc, level+1, pretty, prefix, fn, autocliext, wdef) < 0)
+                    goto done;
+                break;
+            case CX_BODY:
+                hasbody=1;
+                break;
+            case CX_ELMNT:
+                haselement=1;
+                break;
+            default:
+                break;
+            }
+        }
+        /* Check for special case <a/> instead of <a></a>:
+         * Ie, no CX_BODY or CX_ELMNT child.
+         */
+        if (hasbody==0 && haselement==0)
+            (*fn)(f, "/>");
+        else{
+            if ((y = xml_spec(x)) != NULL &&
+                yang_schema_mount_point(y)){
+                subfile++;
+                if (xml2file_split_subfile(h, db, f, x, fn, &fsub) < 0)
+                    goto done;
+                (*fn)(f, "/>");
+            }
+            else{
+                (*fn)(f, ">");
+                if (pretty && hasbody == 0){
+                    (*fn)(f, "\n");
+                }
+            }
+            xc = NULL;
+            while ((xc = xml_child_each(x, xc, -1)) != NULL) {
+                cxobj *xa = NULL;
+                char  *ns = NULL;
+
+                if (wdef == WITHDEFAULTS_REPORT_ALL_TAGGED &&
+                    y == NULL &&
+                    xml_spec(xc) != NULL){
+                    if (xml2ns(xc, IETF_NETCONF_WITH_DEFAULTS_ATTR_PREFIX, &ns) < 0)
+                        goto done;
+                    if (ns == NULL){
+                        if (xmlns_set(xc, IETF_NETCONF_WITH_DEFAULTS_ATTR_PREFIX, IETF_NETCONF_WITH_DEFAULTS_ATTR_NAMESPACE) < 0)
+                            goto done;
+                        xa = xml_find_type(xc, IETF_NETCONF_WITH_DEFAULTS_ATTR_PREFIX, IETF_NETCONF_WITH_DEFAULTS_ATTR_NAMESPACE, CX_ATTR);
+                    }
+                }
+                if (xml_type(xc) != CX_ATTR){
+                    if (subfile == 0 || fsub != NULL)
+                        if (xml2file_recurse_multi(h, db,
+                                                   fsub?fsub:f,
+                                                   xc,
+                                                   fsub?0:level+1,
+                                                   pretty, prefix, fn, autocliext, wdef) <0)
+                            goto done;
+                }
+                if (xa){
+                    if (xml_purge(xa) < 0)
+                        goto done;
+                }
+            }
+            if (subfile == 0){
+                if (pretty && hasbody==0){
+                    if (pretty && prefix)
+                        (*fn)(f, "%s", prefix);
+                    (*fn)(f, "%*s", level1, "");
+                }
+                (*fn)(f, "</");
+                if (namespace)
+                    (*fn)(f, "%s:", namespace);
+                (*fn)(f, "%s>", name);
+            }
+        }
+        if (pretty){
+            (*fn)(f, "\n");
+        }
+        break;
+    default:
+        break;
+    }/* switch */
+ ok:
+    retval = 0;
+ done:
+    if (fsub != NULL)
+        fclose(fsub);
+    if (encstr)
+        free(encstr);
+    return retval;
+}
+
+/*! Print an XML tree structure to multiple files in a directory structure
+ *
+ * Assume xn being in REPORT_ALL state, modify default values according to wdef
+ * @param[in]  h          Output file
+ * @param[in]  db         Datastore name
+ * @param[in]  xn         XML tree
+ * @param[in]  level      How many spaces to insert before each line
+ * @param[in]  pretty     Insert \n and spaces to make the xml more readable.
+ * @param[in]  prefix     Add string to beginning of each line (if pretty)
+ * @param[in]  fn         File print function (if NULL, use fprintf)
+ * @param[in]  skiptop 0: Include top object 1: Skip top-object, only children,
+ * @param[in]  autocliext How to handle autocli extensions: 0: ignore 1: follow
+ * @retval     0          OK
+ * @retval    -1          Error
+ * @see  clixon_xml2file for base function
+ */
+int
+clixon_xml2file_multi(clixon_handle        h,
+                      const char          *db,
+                      cxobj               *xn,
+                      int                  level,
+                      int                  pretty,
+                      char                *prefix,
+                      clicon_output_cb    *fn,
+                      int                  skiptop,
+                      int                  autocliext,
+                      withdefaults_type    wdef)
+{
+    int           retval = 1;
+    cxobj        *xc;
+    FILE         *f = NULL;
+    char         *dbfile = NULL;
+
+    if (fn == NULL)
+        fn = fprintf;
+    if (xmldb_db2file(h, db, &dbfile) < 0)
+        goto done;
+    if ((f = fopen(dbfile, "w")) == NULL){
+        clixon_err(OE_CFG, errno, "Creating file %s", dbfile);
+        goto done;
+    }
+    if (skiptop){
+        xc = NULL;
+        while ((xc = xml_child_each(xn, xc, CX_ELMNT)) != NULL)
+            if (xml2file_recurse_multi(h, db, f, xc, level, pretty, prefix, fn, autocliext, wdef) < 0)
+                goto done;
+    }
+    else {
+        if (xml2file_recurse_multi(h, db, f, xn, level, pretty, prefix, fn, autocliext, wdef) < 0)
+            goto done;
+    }
+    retval = 0;
+ done:
+    if (dbfile)
+        free(dbfile);
+    if (f)
+        fclose(f);
+    return retval;
+}
+#endif
 
 /*! Print an XML tree structure to an output stream and encode chars "<>&"
  *
@@ -949,11 +1280,13 @@ clixon_xml_parse_file(FILE      *fp,
     int   xmlbuflen = BUFLEN; /* start size */
     int   oldxmlbuflen;
     int   failed = 0;
+    int   xtempty; /* empty on entry */
 
-    if (xt==NULL || fp == NULL){
+    if (xt == NULL || fp == NULL){
         clixon_err(OE_XML, EINVAL, "arg is NULL");
         return -1;
     }
+    xtempty = (*xt == NULL);
     if (yb == YB_MODULE && yspec == NULL){
         clixon_err(OE_XML, EINVAL, "yspec is required if yb == YB_MODULE");
         return -1;
@@ -995,7 +1328,7 @@ clixon_xml_parse_file(FILE      *fp,
     } /* while */
     retval = (failed==0) ? 1 : 0;
  done:
-    if (retval < 0 && *xt){
+    if (retval < 0 && *xt && xtempty){
         free(*xt);
         *xt = NULL;
     }

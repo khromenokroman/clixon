@@ -15,6 +15,9 @@ Expected: June 2024
 
 ### Features
 
+* New: Split config into multiple sub-files on mount-point boundaries
+  * Avoid writung sub-files without new data (dirty cache)
+* New: Code for SHA digests.
 * New: [Autolock](https://github.com/clicon/clixon/issues/508)
 * CLI configurable format: [Default format should be configurable](https://github.com/clicon/clixon-controller/issues/87)
 * CLI support for multiple inline commands separated by semi-colon
@@ -25,6 +28,11 @@ Expected: June 2024
     - `CLICON_AUTOLOCK` - Implicit locks
 * New `clixon-lib@2024-04-01.yang` revision
     - Added: Default format
+
+### API changes on existing protocol/config features
+Users may have to change how they access the system
+
+* Openssl mandatory for all configs, not only restconf
 
 ### Corrected Bugs
 

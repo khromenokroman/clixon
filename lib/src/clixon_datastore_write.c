@@ -1167,7 +1167,7 @@ text_modify_top(clixon_handle       h,
     goto done;
 } /* text_modify_top */
 
-/*! Callback function type for xml_apply
+/*! Mark ancestor if any changes to children. Also mark changed xml as cache dirty
  *
  * @param[in]  x    XML node  
  * @param[in]  arg  General-purpose argument
@@ -1185,10 +1185,25 @@ xml_mark_added_ancestors(cxobj *x,
     int        flags = (intptr_t)arg;
 
     if (xml_flag(x, flags)){
-        xml_apply_ancestor(x, (xml_applyfn_t*)xml_flag_set, (void*)XML_FLAG_CHANGE);
+        xml_apply_ancestor(x, (xml_applyfn_t*)xml_flag_set, (void*)(XML_FLAG_CHANGE));
         return 2;
     }
     return 0;
+}
+
+static int
+xml_mark_cache_dirty(cxobj *x,
+                     void  *arg)
+{
+    if (xml_flag(x, XML_FLAG_CHANGE)){
+        xml_flag_set(x, XML_FLAG_CACHE_DIRTY);
+        return 0;
+    }
+    else if (xml_flag(x, XML_FLAG_ADD|XML_FLAG_DEL)){
+        if (xml_apply0(x, CX_ELMNT, (xml_applyfn_t*)xml_flag_set, (void*)(XML_FLAG_CACHE_DIRTY)) < 0)
+            return -1;
+    }
+    return 2;
 }
 
 /*! Modify database given an xml tree and an operation
@@ -1291,7 +1306,11 @@ xmldb_put(clixon_handle       h,
     /* Remove NONE nodes if all subs recursively are also NONE */
     if (xml_tree_prune_flagged_sub(x0, XML_FLAG_NONE, 0, NULL) <0)
         goto done;
+    /* Mark ancestor if any changes to children. */
     if (xml_apply(x0, CX_ELMNT, xml_mark_added_ancestors, (void*)(XML_FLAG_ADD|XML_FLAG_DEL)) < 0)
+        goto done;
+    /* Mark changed xml as cache dirty */
+    if (xml_apply(x0, CX_ELMNT, xml_mark_cache_dirty, NULL) < 0)
         goto done;
     /* Remove empty non-presence containers recursively.
      */
@@ -1304,10 +1323,12 @@ xmldb_put(clixon_handle       h,
     /* Add default recursive values */
     if (xml_default_recurse(x0, 0, XML_FLAG_ADD|XML_FLAG_DEL) < 0)
         goto done;
+#if 0
     /* Clear flags from previous steps */
     if (xml_apply(x0, CX_ELMNT, (xml_applyfn_t*)xml_flag_reset,
                   (void*)(XML_FLAG_NONE|XML_FLAG_ADD|XML_FLAG_DEL|XML_FLAG_CHANGE)) < 0)
         goto done;
+#endif
     /* Write back to datastore cache if first time */
     if (de != NULL)
         de0 = *de;
@@ -1315,10 +1336,30 @@ xmldb_put(clixon_handle       h,
         de0.de_xml = x0;
     de0.de_empty = (xml_child_nr(de0.de_xml) == 0);
     clicon_db_elmnt_set(h, db, &de0);
-    /* Write cache to file unless volatile */
-    if (xmldb_volatile_get(h, db) == 0)
+    /* Write cache to file unless volatile (ie stop syncing to store) */
+    if (xmldb_volatile_get(h, db) == 0){
+#ifdef DATASTORE_MULTIPLE
+        if (strcmp("json", clicon_option_str(h, "CLICON_XMLDB_FORMAT")) == 0){ // XXX JSON
+            if (xmldb_write_cache2file(h, db) < 0)
+                goto done;
+        }
+        else if (xmldb_write_cache2file_multi(h, db) < 0)
+            goto done;
+#else
         if (xmldb_write_cache2file(h, db) < 0)
             goto done;
+#endif
+        /* Clear flags from previous steps + dirty */
+        if (xml_apply(x0, CX_ELMNT, (xml_applyfn_t*)xml_flag_reset,
+                      (void*)(XML_FLAG_NONE|XML_FLAG_ADD|XML_FLAG_DEL|XML_FLAG_CHANGE|XML_FLAG_CACHE_DIRTY)) < 0)
+            goto done;
+    }
+    else {
+        /* Clear flags from previous steps */
+        if (xml_apply(x0, CX_ELMNT, (xml_applyfn_t*)xml_flag_reset,
+                      (void*)(XML_FLAG_NONE|XML_FLAG_ADD|XML_FLAG_DEL|XML_FLAG_CHANGE)) < 0)
+            goto done;
+    }
     retval = 1;
  done:
     clixon_debug(CLIXON_DBG_DATASTORE | CLIXON_DBG_DETAIL, "retval:%d", retval);

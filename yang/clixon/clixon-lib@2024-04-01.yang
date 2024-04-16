@@ -66,6 +66,7 @@ module clixon-lib {
        - source-host (see RFC6022)
        - objectcreate
        - objectexisted
+       - link # For split multiple XML files
       ";
 
     revision 2024-04-01 {
