@@ -132,6 +132,7 @@ show("Show a particular state of the system"){
             json("Show configuration as JSON"), cli_show_auto_mode("candidate", "json", false, false);
     }
     state("Show configuration and state"), cli_show_auto_mode("running", "xml", false, true);
+    compare("Compare candidate and running databases"), compare_dbs("running", "candidate", "xml");
 }
 EOF
 
@@ -213,7 +214,7 @@ sleep 1
 new "Add 2nd data to mount x"
 expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><edit-config><target><candidate/></target><config><top xmlns=\"urn:example:clixon\"><mylist><name>x</name><root><mount1 xmlns=\"urn:example:mount1\"><mylist1><name1>x2</name1><value1>x2value</value1></mylist1></mount1></root></mylist></top></config></edit-config></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
 
-new "Check file changed"
+new "Check candidate subfile changed"
 s1=$(stat -c "%Y" $dir/candidate.d/${subfilename})
 if [ $s0 -eq $s1 ]; then
     err "Timestamp changed" "$s0 = $s1"
@@ -224,7 +225,7 @@ sleep 1
 new "Change existing value in mount x"
 expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><edit-config><target><candidate/></target><config><top xmlns=\"urn:example:clixon\"><mylist><name>x</name><root><mount1 xmlns=\"urn:example:mount1\"><mylist1><name1>x2</name1><value1>x2new</value1></mylist1></mount1></root></mylist></top></config></edit-config></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
 
-new "Check file changed"
+new "Check candidate subfile changed"
 s2=$(stat -c "%Y" $dir/candidate.d/${subfilename})
 if [ $s1 -eq $s2 ]; then
     err "Timestamp changed" "$s1 = $s2"
@@ -235,10 +236,32 @@ sleep 1
 new "Add data to top-level (not mount)"
 expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><edit-config><target><candidate/></target><config><top xmlns=\"urn:example:clixon\"><mylist><name>y</name></mylist></top></config></edit-config></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
 
-new "Check file not changed"
-sn=$(stat -c "%Y" $dir/candidate.d/${subfilename})
-if [ $s2 -ne $sn ]; then
-    err "Timestamp not changed" "$s2 != $sn"
+new "Check candidate subfile not changed"
+s3=$(stat -c "%Y" $dir/candidate.d/${subfilename})
+if [ $s2 -ne $s3 ]; then
+    err "Timestamp not changed" "$s2 != $s3"
+fi
+
+sleep 1
+
+new "Delete leaf"
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><edit-config><target><candidate/></target><config><top xmlns=\"urn:example:clixon\"><mylist><name>x</name><root><mount1 xmlns=\"urn:example:mount1\" xmlns:nc=\"${BASENS}\"><mylist1><name1>x2</name1><value1 nc:operation=\"delete\">x2new</value1></mylist1></mount1></root></mylist></top></config><default-operation>none</default-operation></edit-config></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
+
+new "Check candidate subfile changed"
+s4=$(stat -c "%Y" $dir/candidate.d/${subfilename})
+if [ $s4 -eq $s3 ]; then
+    err "Timestamp changed" "$s4 = $s3"
+fi
+
+sleep 1
+
+new "Delete node"
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><edit-config><target><candidate/></target><config><top xmlns=\"urn:example:clixon\"><mylist><name>x</name><root><mount1 xmlns=\"urn:example:mount1\" xmlns:nc=\"${BASENS}\"><mylist1 nc:operation=\"delete\"><name1>x2</name1></mylist1></mount1></root></mylist></top></config><default-operation>none</default-operation></edit-config></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
+
+new "Check candidate subfile changed"
+s4=$(stat -c "%Y" $dir/candidate.d/${subfilename})
+if [ $s4 -eq $s3 ]; then
+    err "Timestamp changed" "$s4 = $s3"
 fi
 
 new "Reset secondary adds"
@@ -255,6 +278,41 @@ check_db running ${subfilename}
 
 new "cli show config"
 expectpart "$($clixon_cli -1 -f $cfg show config xml -- -m clixon-mount1 -M urn:example:mount1)" 0 "<top xmlns=\"urn:example:clixon\"><mylist><name>x</name><root><mount1 xmlns=\"urn:example:mount1\"><mylist1><name1>x1</name1></mylist1></mount1><extra xmlns=\"urn:example:mount1\"><extraval>foo</extraval></extra></root></mylist></top>"
+
+s0=$(stat -c "%Y" $dir/running.d/${subfilename})
+new "Change mount data"
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><edit-config><target><candidate/></target><config><top xmlns=\"urn:example:clixon\"><mylist><name>x</name><root><mount1 xmlns=\"urn:example:mount1\"><mylist1><name1>x1</name1><value1>foo</value1></mylist1></mount1></root></mylist></top></config></edit-config></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
+
+sleep 1
+
+new "netconf commit 3"
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><commit/></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
+
+new "Check running subfile changed"
+s1=$(stat -c "%Y" $dir/running.d/${subfilename})
+if [ $s0 -eq $s1 ]; then
+    err "Timestamp changed" "$s0 = $s1"
+fi
+
+new "Add data to top-level (not mount)"
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><edit-config><target><candidate/></target><config><top xmlns=\"urn:example:clixon\"><mylist><name>y</name></mylist></top></config></edit-config></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
+
+new "netconf commit 4"
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><commit/></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
+
+sleep 1
+
+new "Check running subfile not changed"
+s2=$(stat -c "%Y" $dir/running.d/${subfilename})
+if [ $s1 -ne $s2 ]; then
+    err "Timestamp not changed" "$s1 != $s2"
+fi
+
+new "Reset secondary adds"
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><edit-config><target><candidate/></target><config><top xmlns=\"urn:example:clixon\"><mylist><name>x</name><root><mount1 xmlns=\"urn:example:mount1\"><mylist1><name1>x1</name1></mylist1></mount1><extra xmlns=\"urn:example:mount1\"><extraval>foo</extraval></extra></root></mylist></top></config><default-operation>replace</default-operation></edit-config></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
+
+new "netconf commit 5"
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><commit/></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
 
 if [ $BE -ne 0 ]; then
     new "Kill backend"

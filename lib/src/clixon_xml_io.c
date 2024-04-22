@@ -455,7 +455,7 @@ xml2file_split_subfile(clixon_handle     h,
     /* Write file if dirty OR does not exist */
     if (xml_flag(x, XML_FLAG_CACHE_DIRTY) ||
         lstat(dbfile, &st) < 0){
-        fprintf(stderr, "%s Open: %s for writing", __FUNCTION__, dbfile);
+        clixon_debug(CLIXON_DBG_DATASTORE, "%s Open: %s for writing", dbfile);
         if ((fd = open(dbfile, O_CREAT|O_WRONLY|O_TRUNC, S_IRWXU)) < 0) {
             clixon_err(OE_UNIX, errno, "open(%s)", dbfile);
             goto done;
@@ -686,16 +686,16 @@ xml2file_recurse_multi(clixon_handle        h,
  * @see  clixon_xml2file for base function
  */
 int
-clixon_xml2file_multi(clixon_handle        h,
-                      const char          *db,
-                      cxobj               *xn,
-                      int                  level,
-                      int                  pretty,
-                      char                *prefix,
-                      clicon_output_cb    *fn,
-                      int                  skiptop,
-                      int                  autocliext,
-                      withdefaults_type    wdef)
+clixon_xml2file_multi(clixon_handle     h,
+                      const char       *db,
+                      cxobj            *xn,
+                      int               level,
+                      int               pretty,
+                      char             *prefix,
+                      clicon_output_cb *fn,
+                      int               skiptop,
+                      int               autocliext,
+                      withdefaults_type wdef)
 {
     int           retval = 1;
     cxobj        *xc;
@@ -787,20 +787,20 @@ xml_dump1(FILE  *f,
 
     if (xml_type(x) != CX_ELMNT)
         return 0;
-    fprintf(stderr, "%*s %s(%s)",
+    fprintf(f, "%*s %s(%s)",
             indent*PRETTYPRINT_INDENT, "",
             //      x,
             xml_name(x),
             xml_type2str(xml_type(x)));
     if (xml_flag(x, XML_FLAG_ADD))
-        fprintf(stderr, " add");
+        fprintf(f, " add");
     if (xml_flag(x, XML_FLAG_DEL))
-        fprintf(stderr, " delete");
+        fprintf(f, " delete");
     if (xml_flag(x, XML_FLAG_CHANGE))
-        fprintf(stderr, " change");
+        fprintf(f, " change");
     if (xml_flag(x, XML_FLAG_MARK))
-        fprintf(stderr, " mark");
-    fprintf(stderr, "\n");
+        fprintf(f, " mark");
+    fprintf(f, "\n");
     xc = NULL;
     while ((xc = xml_child_each(x, xc, -1)) != NULL) {
         xml_dump1(f, xc, indent+1);
