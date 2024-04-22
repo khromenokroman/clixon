@@ -691,6 +691,7 @@ text_modify(clixon_handle       h,
                     }
                     if (xml_value_set(x0b, x1bstr) < 0)
                         goto done;
+                    xml_flag_set(x0, XML_FLAG_ADD);
                     /* If a default value ies replaced, then reset default flag */
                     if (xml_flag(x0, XML_FLAG_DEFAULT))
                         xml_flag_reset(x0, XML_FLAG_DEFAULT);

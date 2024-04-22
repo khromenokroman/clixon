@@ -97,6 +97,9 @@ module clixon-mount1{
          leaf name1{
             type string;
          }
+         leaf value1 {
+            type string;
+         }
       }
    }
    container extra{
@@ -208,22 +211,34 @@ s0=$(stat -c "%Y" $dir/candidate.d/${subfilename})
 sleep 1
 
 new "Add 2nd data to mount x"
-expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><edit-config><target><candidate/></target><config><top xmlns=\"urn:example:clixon\"><mylist><name>x</name><root><mount1 xmlns=\"urn:example:mount1\"><mylist1><name1>x2</name1></mylist1></mount1></root></mylist></top></config></edit-config></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><edit-config><target><candidate/></target><config><top xmlns=\"urn:example:clixon\"><mylist><name>x</name><root><mount1 xmlns=\"urn:example:mount1\"><mylist1><name1>x2</name1><value1>x2value</value1></mylist1></mount1></root></mylist></top></config></edit-config></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
 
 new "Check file changed"
 s1=$(stat -c "%Y" $dir/candidate.d/${subfilename})
 if [ $s0 -eq $s1 ]; then
     err "Timestamp changed" "$s0 = $s1"
 fi
+
+sleep 1
+
+new "Change existing value in mount x"
+expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><edit-config><target><candidate/></target><config><top xmlns=\"urn:example:clixon\"><mylist><name>x</name><root><mount1 xmlns=\"urn:example:mount1\"><mylist1><name1>x2</name1><value1>x2new</value1></mylist1></mount1></root></mylist></top></config></edit-config></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
+
+new "Check file changed"
+s2=$(stat -c "%Y" $dir/candidate.d/${subfilename})
+if [ $s1 -eq $s2 ]; then
+    err "Timestamp changed" "$s1 = $s2"
+fi
+
 sleep 1
 
 new "Add data to top-level (not mount)"
 expecteof_netconf "$clixon_netconf -qf $cfg" 0 "$DEFAULTHELLO" "<rpc $DEFAULTNS><edit-config><target><candidate/></target><config><top xmlns=\"urn:example:clixon\"><mylist><name>y</name></mylist></top></config></edit-config></rpc>" "" "<rpc-reply $DEFAULTNS><ok/></rpc-reply>"
 
 new "Check file not changed"
-s2=$(stat -c "%Y" $dir/candidate.d/${subfilename})
-if [ $s1 -ne $s2 ]; then
-    err "Timestamp not changed" "$s1 != $s2"
+sn=$(stat -c "%Y" $dir/candidate.d/${subfilename})
+if [ $s2 -ne $sn ]; then
+    err "Timestamp not changed" "$s2 != $sn"
 fi
 
 new "Reset secondary adds"
