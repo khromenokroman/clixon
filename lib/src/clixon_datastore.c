@@ -166,7 +166,6 @@ xmldb_db2file(clixon_handle  h,
     return retval;
 }
 
-#ifdef DATASTORE_MULTIPLE
 /*! Translate from symbolic database name to sub-directory of configure sub-files, no checks
  *
  * @param[in]   h       Clixon handle
@@ -210,7 +209,6 @@ xmldb_db2subdir(clixon_handle h,
         cbuf_free(cb);
     return retval;
 }
-#endif /* DATASTORE_MULTIPLE */
 
 /*! Connect to a datastore plugin, allocate resources to be used in API calls
  *
@@ -314,13 +312,10 @@ xmldb_copy(clixon_handle h,
     if (de2)
         de0 = *de2;
     de0.de_xml = x2; /* The new tree */
-#ifdef DATASTORE_MULTIPLE
-    {
+    if (clicon_option_bool(h, "CLICON_XMLDB_MULTI")){
         char *subdir = NULL;
-    struct stat  st = {0,};
-        // WHY DO WE CREATE HERE?
-        if (0 && xmldb_create(h, to) < 0)
-            goto done;
+        struct stat  st = {0,};
+
         if (xmldb_db2subdir(h, to, &subdir) < 0)
             goto done;
         if (stat(subdir, &st) < 0){
@@ -332,7 +327,6 @@ xmldb_copy(clixon_handle h,
         if (subdir)
             free(subdir);
     }
-#endif
     clicon_db_elmnt_set(h, to, &de0);
     /* Copy the files themselves (above only in-memory cache) */
     if (xmldb_db2file(h, from, &fromfile) < 0)
@@ -341,8 +335,7 @@ xmldb_copy(clixon_handle h,
         goto done;
     if (clicon_file_copy(fromfile, tofile) < 0)
         goto done;
-#ifdef DATASTORE_MULTIPLE
-    {
+    if (clicon_option_bool(h, "CLICON_XMLDB_MULTI")) {
         char      *fromdir = NULL;
         char      *todir = NULL;
 
@@ -357,7 +350,6 @@ xmldb_copy(clixon_handle h,
         if (todir)
             free(todir);
     }
-#endif /* DATASTORE_MULTIPLE */
     retval = 0;
  done:
     clixon_debug(CLIXON_DBG_DATASTORE, "retval:%d", retval);
@@ -562,17 +554,15 @@ int
 xmldb_delete(clixon_handle h,
              const char   *db)
 {
-    int         retval = -1;
-    char       *filename = NULL;
-    struct stat st = {0,};
-#ifdef DATASTORE_MULTIPLE
+    int            retval = -1;
+    char          *filename = NULL;
+    struct stat    st = {0,};
     cbuf          *cb = NULL;
     char          *subdir = NULL;
-    struct dirent *dp;
+    struct dirent *dp = NULL;
     int            ndp;
     int            i;
     char          *regexp = NULL;
-#endif
 
     clixon_debug(CLIXON_DBG_DATASTORE | CLIXON_DBG_DETAIL, "%s", db);
     if (xmldb_clear(h, db) < 0)
@@ -584,41 +574,41 @@ xmldb_delete(clixon_handle h,
             clixon_err(OE_DB, errno, "truncate %s", filename);
             goto done;
         }
-#ifdef DATASTORE_MULTIPLE
-    if (xmldb_db2subdir(h, db, &subdir) < 0)
-        goto done;
-    if (stat(subdir, &st) == 0){
-        if ((ndp = clicon_file_dirent(subdir, &dp, regexp, S_IFREG)) < 0)
+    if (clicon_option_bool(h, "CLICON_XMLDB_MULTI")){
+        if (xmldb_db2subdir(h, db, &subdir) < 0)
             goto done;
-        if ((cb = cbuf_new()) == NULL){
-            clixon_err(OE_XML, errno, "cbuf_new");
-            goto done;
-        }
-        for (i = 0; i < ndp; i++){
-            cbuf_reset(cb);
-            cprintf(cb, "%s/%s", subdir, dp[i].d_name);
-            if (unlink(cbuf_get(cb)) < 0){
-                clixon_err(OE_DB, errno, "unlink(%s)", cbuf_get(cb));
+        if (stat(subdir, &st) == 0){
+            if ((ndp = clicon_file_dirent(subdir, &dp, regexp, S_IFREG)) < 0)
+                goto done;
+            if ((cb = cbuf_new()) == NULL){
+                clixon_err(OE_XML, errno, "cbuf_new");
                 goto done;
             }
-        }
-        if (rmdir(subdir) < 0){
+            for (i = 0; i < ndp; i++){
+                cbuf_reset(cb);
+                cprintf(cb, "%s/%s", subdir, dp[i].d_name);
+                if (unlink(cbuf_get(cb)) < 0){
+                    clixon_err(OE_DB, errno, "unlink(%s)", cbuf_get(cb));
+                    goto done;
+                }
+            }
+            if (rmdir(subdir) < 0){
 #if 0 /* Ignore this for now, there are some cornercases where this is problamatic, see confirmed-commit */
-            clixon_err(OE_DB, errno, "rmdir(%s)", subdir);
-            goto done;
+                clixon_err(OE_DB, errno, "rmdir(%s)", subdir);
+                goto done;
 #endif
+            }
         }
     }
-#endif /* DATASTORE_MULTIPLE */
     retval = 0;
  done:
     clixon_debug(CLIXON_DBG_DATASTORE | CLIXON_DBG_DETAIL, "retval:%d", retval);
-#ifdef DATASTORE_MULTIPLE
+    if (dp)
+        free(dp);
     if (cb)
         cbuf_free(cb);
     if (subdir)
         free(subdir);
-#endif
     if (filename)
         free(filename);
     return retval;
@@ -640,10 +630,8 @@ xmldb_create(clixon_handle h,
     int                 fd = -1;
     db_elmnt           *de = NULL;
     cxobj              *xt = NULL;
-#ifdef DATASTORE_MULTIPLE
     char        *subdir = NULL;
     struct stat  st = {0,};
-#endif
 
     clixon_debug(CLIXON_DBG_DATASTORE | CLIXON_DBG_DETAIL, "%s", db);
     if ((de = clicon_db_elmnt_get(h, db)) != NULL){
@@ -658,23 +646,21 @@ xmldb_create(clixon_handle h,
         clixon_err(OE_UNIX, errno, "open(%s)", filename);
         goto done;
     }
-#ifdef DATASTORE_MULTIPLE
-    if (xmldb_db2subdir(h, db, &subdir) < 0)
-        goto done;
-    if (stat(subdir, &st) < 0){
-        if (mkdir(subdir, S_IRWXU|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IXOTH) < 0){
-            clixon_err(OE_UNIX, errno, "mkdir(%s)", subdir);
+    if (clicon_option_bool(h, "CLICON_XMLDB_MULTI")){
+        if (xmldb_db2subdir(h, db, &subdir) < 0)
             goto done;
+        if (stat(subdir, &st) < 0){
+            if (mkdir(subdir, S_IRWXU|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IXOTH) < 0){
+                clixon_err(OE_UNIX, errno, "mkdir(%s)", subdir);
+                goto done;
+            }
         }
     }
-#endif /* DATASTORE_MULTIPLE */
     retval = 0;
  done:
     clixon_debug(CLIXON_DBG_DATASTORE | CLIXON_DBG_DETAIL, "retval:%d", retval);
-#ifdef DATASTORE_MULTIPLE
     if (subdir)
         free(subdir);
-#endif
     if (filename)
         free(filename);
     if (fd != -1)
@@ -968,167 +954,5 @@ xmldb_populate(clixon_handle h,
     }
     retval = ret;
  done:
-    return retval;
-}
-
-/* Given open file, xml-tree, and wdef, add modstate, get format and write to file
- *
- * @param[in]  h    Clixon handle
- * @param[in]  db   Name of database to search in (filename including dir path
- * @param[in]  xt   Top of XML tree
- * @param[in]  wdef With-defaults parameter
- * @retval     0    OK
- * @retval    -1    Error
- */
-int
-xmldb_dump(clixon_handle     h,
-           FILE             *f,
-           cxobj            *xt,
-           withdefaults_type wdef)
-{
-    int              retval = -1;
-    cxobj           *xm;
-    cxobj           *xmodst = NULL;
-    char            *formatstr;
-    enum format_enum format = FORMAT_XML;
-    int              pretty;
-
-    /* Add modstate first */
-    if ((xm = clicon_modst_cache_get(h, 1)) != NULL){
-        if ((xmodst = xml_dup(xm)) == NULL)
-            goto done;
-        if (xml_child_insert_pos(xt, xmodst, 0) < 0)
-            goto done;
-        xml_parent_set(xmodst, xt);
-    }
-    pretty = clicon_option_bool(h, "CLICON_XMLDB_PRETTY");
-    if ((formatstr = clicon_option_str(h, "CLICON_XMLDB_FORMAT")) != NULL){
-        if ((format = format_str2int(formatstr)) < 0){
-            clixon_err(OE_XML, 0, "Format %s invalid", formatstr);
-            goto done;
-        }
-    }
-    switch (format){
-    case FORMAT_JSON:
-        if (clixon_json2file(f, xt, pretty, fprintf, 0, 0) < 0)
-            goto done;
-        break;
-    case FORMAT_XML:
-        if (clixon_xml2file1(f, xt, 0, pretty, NULL, fprintf, 0, 0, wdef) < 0)
-            goto done;
-        break;
-    default:
-        clixon_err(OE_XML, 0, "Format %s not supported", format_int2str(format));
-        goto done;
-        break;
-    }
-    /* Remove modules state after writing to file */
-    if (xmodst && xml_purge(xmodst) < 0)
-        goto done;
-    retval = 0;
- done:
-    return retval;
-}
-
-#ifdef DATASTORE_MULTIPLE
-/*! Given datastore, get cache and format, set wdef, add modstate and print to multiple files
- *
- * Also add mod-state if applicable
- * @param[in]  h   Clixon handle
- * @param[in]  db  Name of database to search in (filename including dir path
- * @retval     0   OK
- * @retval    -1   Error
- * XXX: maybe too uch functionality to be in this lib?
- */
-int
-xmldb_write_cache2file_multi(clixon_handle h,
-                             const char   *db)
-{
-    int               retval = -1;
-    cxobj            *xt;
-    char             *formatstr;
-    enum format_enum  format = FORMAT_XML;
-    withdefaults_type wdef = WITHDEFAULTS_EXPLICIT;
-    cxobj            *xm;
-    cxobj            *xmodst = NULL;
-    int               pretty;
-
-    if ((xt = xmldb_cache_get(h, db)) == NULL){
-        clixon_err(OE_XML, 0, "XML cache not found");
-        goto done;
-    }
-    pretty = clicon_option_bool(h, "CLICON_XMLDB_PRETTY");
-    if ((formatstr = clicon_option_str(h, "CLICON_XMLDB_FORMAT")) != NULL){
-        if ((format = format_str2int(formatstr)) < 0){
-            clixon_err(OE_XML, 0, "Format %s invalid", formatstr);
-            goto done;
-        }
-    }
-    /* Add modstate */
-    if ((xm = clicon_modst_cache_get(h, 1)) != NULL){
-        if ((xmodst = xml_dup(xm)) == NULL)
-            goto done;
-        if (xml_child_insert_pos(xt, xmodst, 0) < 0)
-            goto done;
-        xml_parent_set(xmodst, xt);
-    }
-    switch (format){
-    case FORMAT_XML:
-        if (clixon_xml2file_multi(h, db, xt, 0, pretty, NULL, fprintf, 0, 0, wdef) < 0)
-            goto done;
-        break;
-    default:
-        clixon_err(OE_XML, 0, "Format %s not supported", format_int2str(format));
-        goto done;
-        break;
-    }
-    /* Remove modules state after writing to file */
-    if (xmodst && xml_purge(xmodst) < 0)
-        goto done;
-    retval = 0;
- done:
-    return retval;
-}
-#endif /* DATASTORE_MULTIPLE */
-
-/*! Given a datastore, get the cache, open a db file and write the cache to the file
- *
- * Also add mod-state if applicable
- * @param[in]  h   Clixon handle
- * @param[in]  db  Name of database to search in (filename including dir path
- * @retval     0   OK
- * @retval    -1   Error
- */
-int
-xmldb_write_cache2file(clixon_handle h,
-                       const char   *db)
-{
-    int         retval = -1;
-    cxobj      *xt;
-    FILE       *f = NULL;
-    char       *dbfile = NULL;
-
-    if (xmldb_db2file(h, db, &dbfile) < 0)
-        goto done;
-    if (dbfile == NULL){
-        clixon_err(OE_XML, 0, "dbfile NULL");
-        goto done;
-    }
-    if ((xt = xmldb_cache_get(h, db)) == NULL){
-        clixon_err(OE_XML, 0, "XML cache not found");
-        goto done;
-    }
-    if ((f = fopen(dbfile, "w")) == NULL){
-        clixon_err(OE_CFG, errno, "Creating file %s", dbfile);
-        goto done;
-    }
-    if (xmldb_dump(h, f, xt, WITHDEFAULTS_EXPLICIT) < 0)
-        goto done;
-    retval = 0;
- done:
-    if (dbfile)
-        free(dbfile);
-    if (f)
-        fclose(f);
     return retval;
 }

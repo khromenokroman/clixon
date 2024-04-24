@@ -39,6 +39,7 @@ cat <<EOF > $cfg
   <CLICON_BACKEND_DIR>/usr/local/lib/$APPNAME/backend</CLICON_BACKEND_DIR>
   <CLICON_BACKEND_PIDFILE>/usr/local/var/run/$APPNAME.pidfile</CLICON_BACKEND_PIDFILE>
   <CLICON_XMLDB_DIR>$dir</CLICON_XMLDB_DIR>
+  <CLICON_XMLDB_MULTI>true</CLICON_XMLDB_MULTI>
   <CLICON_NETCONF_MONITORING>true</CLICON_NETCONF_MONITORING>
   <CLICON_VALIDATE_STATE_XML>true</CLICON_VALIDATE_STATE_XML>
   <CLICON_STREAM_DISCOVERY_RFC5277>true</CLICON_STREAM_DISCOVERY_RFC5277>
@@ -69,6 +70,9 @@ module clixon-example{
   import ietf-yang-schema-mount {
     prefix yangmnt;
   }
+  import clixon-lib {
+    prefix cl;
+  }
   container top{
     list mylist{
       key name;
@@ -80,6 +84,7 @@ module clixon-example{
          yangmnt:mount-point "mylabel"{
             description "Root for other yang models";
          }
+         cl:xmldb-split; /* Multi-XMLDB: split datastore here */
       }
     }
   }
@@ -162,7 +167,7 @@ EOF
     new "Check ${dbname}_db"
     ret=$(diff $dir/x_db $dir/${dbname}_db)
     if [ $? -ne 0 ]; then
-        err "No diff" "$ret"
+        err "$(cat $dir/x_db)" "$(cat $dir/${dbname}_db)"
     fi
     cat <<EOF > $dir/x_subfile
 <mount1 xmlns="urn:example:mount1">
@@ -177,7 +182,7 @@ EOF
     new "Check ${dbname}.d/$subfile"
     ret=$(diff $dir/x_subfile $dir/${dbname}.d/$subfile)
     if [ $? -ne 0 ]; then
-        err "No diff" "$ret"
+        err "$(cat $dir/x_subfile)" "$(cat $dir/${dbname}.d/$subfile)"
     fi
 }
 

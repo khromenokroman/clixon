@@ -315,7 +315,6 @@ clicon_file_copy(char *src,
     return retval;
 }
 
-#ifdef DATASTORE_MULTIPLE
 /*! Make a copy of directory non-recursive
  *
  * @param[in]  srcdir  Source dirname
@@ -352,7 +351,6 @@ clicon_dir_copy(char *srcdir,
         closedir(dirp);
     return retval;
 }
-#endif /* DATASTORE_MULTIPLE */
 
 /*! Read content of file into cbuf
  *

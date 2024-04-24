@@ -45,11 +45,12 @@
 #include <string.h>
 #include <limits.h>
 #include <stdint.h>
-#include <sys/types.h>
 #include <unistd.h>
 #include <dirent.h>
 #include <syslog.h>
 #include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 /* cligen */
 #include <cligen/cligen.h>
@@ -58,6 +59,7 @@
 #include "clixon_string.h"
 #include "clixon_queue.h"
 #include "clixon_hash.h"
+#include "clixon_digest.h"
 #include "clixon_handle.h"
 #include "clixon_yang.h"
 #include "clixon_xml.h"
@@ -84,6 +86,18 @@
 #include "clixon_datastore.h"
 #include "clixon_datastore_write.h"
 #include "clixon_datastore_read.h"
+
+/* Local types */
+/* Argument to apply for recursive call to xmldb_multi write calls
+ * @see xmldb_multi_read_arg
+*/
+struct xmldb_multi_write_arg {
+    clixon_handle    *mw_h;
+    const char       *mw_db;
+    int               mw_pretty;
+    withdefaults_type mw_wdef;
+    enum format_enum  mw_format;
+};
 
 /*! Given an attribute name and its expected namespace, find its value
  * 
@@ -1324,12 +1338,6 @@ xmldb_put(clixon_handle       h,
     /* Add default recursive values */
     if (xml_default_recurse(x0, 0, XML_FLAG_ADD|XML_FLAG_DEL) < 0)
         goto done;
-#if 0
-    /* Clear flags from previous steps */
-    if (xml_apply(x0, CX_ELMNT, (xml_applyfn_t*)xml_flag_reset,
-                  (void*)(XML_FLAG_NONE|XML_FLAG_ADD|XML_FLAG_DEL|XML_FLAG_CHANGE)) < 0)
-        goto done;
-#endif
     /* Write back to datastore cache if first time */
     if (de != NULL)
         de0 = *de;
@@ -1339,17 +1347,8 @@ xmldb_put(clixon_handle       h,
     clicon_db_elmnt_set(h, db, &de0);
     /* Write cache to file unless volatile (ie stop syncing to store) */
     if (xmldb_volatile_get(h, db) == 0){
-#ifdef DATASTORE_MULTIPLE
-        if (strcmp("json", clicon_option_str(h, "CLICON_XMLDB_FORMAT")) == 0){ // XXX JSON
-            if (xmldb_write_cache2file(h, db) < 0)
-                goto done;
-        }
-        else if (xmldb_write_cache2file_multi(h, db) < 0)
-            goto done;
-#else
         if (xmldb_write_cache2file(h, db) < 0)
             goto done;
-#endif
         /* Clear flags from previous steps + dirty */
         if (xml_apply(x0, CX_ELMNT, (xml_applyfn_t*)xml_flag_reset,
                       (void*)(XML_FLAG_NONE|XML_FLAG_ADD|XML_FLAG_DEL|XML_FLAG_CHANGE|XML_FLAG_CACHE_DIRTY)) < 0)
@@ -1372,4 +1371,204 @@ xmldb_put(clixon_handle       h,
  fail:
     retval = 0;
     goto done;
+}
+
+/*! Callback function for xmldb-multi write
+ *
+ * Look for link attribute in XML, and if found open the linked file for parsing
+ * @param[in]  x    XML node
+ * @param[in]  arg
+ * @retval     2    Locally abort this subtree, continue with others
+ * @retval     1    Abort, dont continue with others, return 1 to end user
+ * @retval     0    OK, continue
+ * @retval    -1    Error, aborted at first error encounter, return -1 to end user
+ */
+static int
+xmldb_multi_write_applyfn(cxobj *x,
+                          void  *arg)
+{
+    struct xmldb_multi_write_arg *mw = (struct xmldb_multi_write_arg *) arg;
+    int           retval = -1;
+    clixon_handle h = mw->mw_h;
+    yang_stmt    *y;
+    int           exist = 0;
+    char         *xpath = NULL;
+    char         *hexstr = NULL;
+    cbuf         *cb = NULL;
+    char         *subdir = NULL;
+    char         *dbfile;
+    struct stat   st = {0,};
+    int           fd = -1;
+    FILE         *fsub = NULL;
+
+    if (xml_child_nr_type(x, CX_ELMNT) > 0 &&
+        (y = xml_spec(x)) != NULL){
+        if (yang_extension_value(y, "xmldb-split", CLIXON_LIB_NS, &exist, NULL) < 0)
+            goto done;
+        if (exist){
+            if (xml2xpath(x, NULL, 1, 0, &xpath) < 0)
+                goto done;
+            if (clixon_digest_hex(xpath, &hexstr) < 0)
+                goto done;
+            if (xmldb_db2subdir(h, mw->mw_db, &subdir) < 0)
+                goto done;
+            if ((cb = cbuf_new()) == NULL){
+                clixon_err(OE_XML, errno, "cbuf_new");
+                goto done;
+            }
+            cprintf(cb, "%s/%s.xml", subdir, hexstr);
+            dbfile = cbuf_get(cb);
+            if (xml_flag(x, XML_FLAG_CACHE_DIRTY) ||
+                lstat(dbfile, &st) < 0){
+                clixon_debug(CLIXON_DBG_DATASTORE, "Open: %s for writing", dbfile);
+                if ((fd = open(dbfile, O_CREAT|O_WRONLY|O_TRUNC, S_IRWXU)) < 0) {
+                    clixon_err(OE_UNIX, errno, "open(%s)", dbfile);
+                    goto done;
+                }
+                if ((fsub = fdopen(fd, "w")) == NULL){
+                    clixon_err(OE_CFG, errno, "fdopen(%s)", dbfile);
+                    goto done;
+                }
+                /* Dont recurse multi-file yet */
+                if (clixon_xml2file1(fsub, x, 0, mw->mw_pretty, NULL, fprintf, 1, 0, mw->mw_wdef, 0) < 0)
+                    goto done;
+            }
+        }
+    }
+    retval = 0;
+ done:
+    if (fsub != NULL)
+        fclose(fsub);
+    if (cb)
+        cbuf_free(cb);
+    if (subdir)
+        free(subdir);
+    if (xpath)
+        free(xpath);
+    if (hexstr)
+        free(hexstr);
+    return retval;
+}
+
+/* Given open file, xml-tree, and wdef, add modstate, get format and write to file
+ *
+ * @param[in]  h        Clixon handle
+ * @param[in]  f        Output file
+ * @param[in]  xt       Top of XML tree
+ * @param[in]  format   Output format
+ * @param[in]  pretty   Pretty-print
+ * @param[in]  wdef     With-defaults parameter
+ * @param[in]  multi    If split into multiple files
+ * @param[in]  multidb  Database name (only if multi)
+ * @retval     0        OK
+ * @retval    -1        Error
+ */
+int
+xmldb_dump(clixon_handle     h,
+           FILE             *f,
+           cxobj            *xt,
+           enum format_enum  format,
+           int               pretty,
+           withdefaults_type wdef,
+           int               multi,
+           const char       *multidb)
+{
+    int                          retval = -1;
+    struct xmldb_multi_write_arg mw = {0,};
+    cxobj                       *xm;
+    cxobj                       *xmodst = NULL;
+
+    /* Add modstate */
+    if ((xm = clicon_modst_cache_get(h, 1)) != NULL){
+        if ((xmodst = xml_dup(xm)) == NULL)
+            goto done;
+        if (xml_child_insert_pos(xt, xmodst, 0) < 0)
+            goto done;
+        xml_parent_set(xmodst, xt);
+    }
+    switch (format){
+    case FORMAT_XML:
+        if (clixon_xml2file1(f, xt, 0, pretty, NULL, fprintf, 0, 0, wdef, multi) < 0)
+            goto done;
+        if (multi){
+            mw.mw_h = h;
+            mw.mw_db = multidb;
+            mw.mw_pretty = pretty;
+            mw.mw_wdef = wdef;
+            mw.mw_format = format;
+            if (xml_apply(xt, CX_ELMNT, (xml_applyfn_t*)xmldb_multi_write_applyfn, &mw) < 0)
+                goto done;
+        }
+        break;
+    case FORMAT_JSON:
+        if (multi){
+            clixon_err(OE_CFG, errno, "JSON+multi not supported");
+            goto done;
+        }
+        if (clixon_json2file(f, xt, pretty, fprintf, 0, 0) < 0)
+            goto done;
+        break;
+    default:
+        clixon_err(OE_XML, 0, "Format %s not supported", format_int2str(format));
+        goto done;
+        break;
+    }
+    /* Remove modules state after writing to file */
+    if (xmodst && xml_purge(xmodst) < 0)
+        goto done;
+    retval = 0;
+ done:
+    return retval;
+}
+
+
+/*! Given datastore, get cache and format, set wdef, add modstate and print to multiple files
+ *
+ * Also add mod-state if applicable
+ * @param[in]  h   Clixon handle
+ * @param[in]  db  Name of database to search in (filename including dir path
+ * @retval     0   OK
+ * @retval    -1   Error
+ */
+int
+xmldb_write_cache2file(clixon_handle h,
+                       const char   *db)
+{
+    int               retval = -1;
+    cxobj            *xt;
+    char             *formatstr;
+    enum format_enum  format = FORMAT_XML;
+    withdefaults_type wdef = WITHDEFAULTS_EXPLICIT;
+    int               pretty;
+    int               multi;
+    FILE             *f = NULL;
+    char             *dbfile = NULL;
+
+    if ((xt = xmldb_cache_get(h, db)) == NULL){
+        clixon_err(OE_XML, 0, "XML cache not found");
+        goto done;
+    }
+    pretty = clicon_option_bool(h, "CLICON_XMLDB_PRETTY");
+    multi = clicon_option_bool(h, "CLICON_XMLDB_MULTI");
+    if ((formatstr = clicon_option_str(h, "CLICON_XMLDB_FORMAT")) != NULL){
+        if ((format = format_str2int(formatstr)) < 0){
+            clixon_err(OE_XML, 0, "Format %s invalid", formatstr);
+            goto done;
+        }
+    }
+    if (xmldb_db2file(h, db, &dbfile) < 0)
+        goto done;
+    if ((f = fopen(dbfile, "w")) == NULL){
+        clixon_err(OE_CFG, errno, "fopen(%s)", dbfile);
+        goto done;
+    }
+    if (xmldb_dump(h, f, xt, format, pretty, wdef, multi, db) < 0)
+        goto done;
+    retval = 0;
+ done:
+    if (dbfile)
+        free(dbfile);
+    if (f)
+        fclose(f);
+    return retval;
 }

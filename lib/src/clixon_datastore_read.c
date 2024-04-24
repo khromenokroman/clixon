@@ -87,12 +87,14 @@
 #define handle(xh) (assert(text_handle_check(xh)==0),(struct text_handle *)(xh))
 
 /* Local types */
-/* Argument to apply for recursive call to xmldb_multi calls */
-struct xmldb_multi_arg {
-    char            *xm_subdir;
-    yang_stmt       *xm_yspec;
-    enum format_enum xm_format;
-    cxobj          **xm_xerr;
+/* Argument to apply for recursive call to xmldb_multi calls 
+ * @see xmldb_multi_write_arg
+ */
+struct xmldb_multi_read_arg {
+    char            *mr_subdir;
+    yang_stmt       *mr_yspec;
+    enum format_enum mr_format;
+    cxobj          **mr_xerr;
 };
 
 /*! Ensure that xt only has a single sub-element and that is "config" 
@@ -455,9 +457,9 @@ disable_nacm_on_empty(cxobj     *xt,
     return retval;
 }
 
-#ifdef DATASTORE_MULTIPLE
-/*! Callback function type for xml_apply
+/*! Callback function for xmldb-multi read
  *
+ * Look for link attribute in XML, and if found open the linked file for parsing
  * @param[in]  x    XML node
  * @param[in]  arg
  * @retval     2    Locally abort this subtree, continue with others
@@ -466,10 +468,10 @@ disable_nacm_on_empty(cxobj     *xt,
  * @retval    -1    Error, aborted at first error encounter, return -1 to end user
  */
 static int
-xmldb_multi_applyfn(cxobj *x,
-                   void   *arg)
+xmldb_multi_read_applyfn(cxobj *x,
+                         void  *arg)
 {
-    struct xmldb_multi_arg *xm = (struct xmldb_multi_arg *) arg;
+    struct xmldb_multi_read_arg *mr = (struct xmldb_multi_read_arg *) arg;
     int                     retval = -1;
     cxobj                  *xa;
     char                   *filename;
@@ -483,7 +485,7 @@ xmldb_multi_applyfn(cxobj *x,
             clixon_err(OE_XML, errno, "cbuf_new");
             goto done;
         }
-        cprintf(cb, "%s/%s", xm->xm_subdir, filename);
+        cprintf(cb, "%s/%s", mr->mr_subdir, filename);
         xml_purge(xa);
         if ((xa = xml_find_type(x, "xmlns", CLIXON_LIB_PREFIX, CX_ATTR)) != NULL)
             xml_purge(xa);
@@ -493,13 +495,13 @@ xmldb_multi_applyfn(cxobj *x,
             clixon_err(OE_CFG, errno, "fdopen(%s)", dbfile);
             goto done;
         }
-        switch (xm->xm_format){
+        switch (mr->mr_format){
         case FORMAT_JSON:
-            if (clixon_json_parse_file(fp, 1, YB_NONE, xm->xm_yspec, &x, xm->xm_xerr) < 0)
+            if (clixon_json_parse_file(fp, 1, YB_NONE, mr->mr_yspec, &x, mr->mr_xerr) < 0)
                 goto done;
             break;
         case FORMAT_XML:
-            if (clixon_xml_parse_file(fp, YB_NONE, xm->xm_yspec, &x, xm->xm_xerr) < 0)
+            if (clixon_xml_parse_file(fp, YB_NONE, mr->mr_yspec, &x, mr->mr_xerr) < 0)
                 goto done;
             break;
         default:
@@ -516,7 +518,6 @@ xmldb_multi_applyfn(cxobj *x,
         fclose(fp);
     return retval;
 }
-#endif /* DATASTORE_MULTIPLE */
 
 /*! Common read function that reads an XML tree from file
  *
@@ -562,7 +563,7 @@ xmldb_readfile(clixon_handle    h,
     cxobj           *xmodfile = NULL;
     cxobj           *x;
     yang_stmt       *yspec1 = NULL;
-    struct xmldb_multi_arg xm = {0, };
+    struct xmldb_multi_read_arg mr = {0, };
 
     if (yb != YB_MODULE && yb != YB_NONE){
         clixon_err(OE_XML, EINVAL, "yb is %d but should be module or none", yb);
@@ -608,15 +609,15 @@ xmldb_readfile(clixon_handle    h,
         goto done;
         break;
     }
-#ifdef DATASTORE_MULTIPLE
-    if (xmldb_db2subdir(h, db, &xm.xm_subdir) < 0)
-        goto done;
-    xm.xm_format = format;
-    xm.xm_yspec = yspec;
-    xm.xm_xerr = xerr;
-    if (xml_apply(x0, CX_ELMNT, (xml_applyfn_t*)xmldb_multi_applyfn, &xm) < 0)
-        goto done;
-#endif
+    if (clicon_option_bool(h, "CLICON_XMLDB_MULTI")){
+        if (xmldb_db2subdir(h, db, &mr.mr_subdir) < 0)
+            goto done;
+        mr.mr_format = format;
+        mr.mr_yspec = yspec;
+        mr.mr_xerr = xerr;
+        if (xml_apply(x0, CX_ELMNT, (xml_applyfn_t*)xmldb_multi_read_applyfn, &mr) < 0)
+            goto done;
+    }
     /* Always assert a top-level called "config". 
      * To ensure that, deal with two cases:
      * 1. File is empty <top/> -> rename top-level to "config" 
@@ -738,8 +739,8 @@ xmldb_readfile(clixon_handle    h,
     }
     retval = 1;
  done:
-    if (xm.xm_subdir)
-        free(xm.xm_subdir);
+    if (mr.mr_subdir)
+        free(mr.mr_subdir);
     if (yspec1)
         ys_free1(yspec1, 1);
     if (xmodfile)

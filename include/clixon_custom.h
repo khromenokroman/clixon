@@ -206,14 +206,6 @@
  */
 #define COMPAT_6_5
 
-/*! Split config data into multiple sub files
- *
- * Keep track of which part of the XML tree are dirty, and dont sync sub files if cache is not dirty.
- * So far split is made on mountpoints only
- *
- */
-#define DATASTORE_MULTIPLE
-
 /*! Use SHA256 (32 bytes) instead of SHA1 (20 bytes)
  *
  * Digest use is not cryptographic use, so SHA1 is enough for now

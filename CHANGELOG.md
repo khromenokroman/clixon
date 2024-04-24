@@ -15,17 +15,18 @@ Expected: June 2024
 
 ### Features
 
-* New: Split config into multiple sub-files on mount-point boundaries
+* New: Split configure datastore multiple sub-files on mount-point boundaries
   * Avoid writung sub-files without new data (dirty cache)
-* New: Code for SHA digests.
+* Added: Code for SHA digests.
 * New: [Autolock](https://github.com/clicon/clixon/issues/508)
 * CLI configurable format: [Default format should be configurable](https://github.com/clicon/clixon-controller/issues/87)
 * CLI support for multiple inline commands separated by semi-colon
 * New `clixon-config@2024-04-01.yang` revision
   * Added options:
-    - `CLICON_NETCONF_DUPLICATE_ALLOW` - Disable duplicate check in NETCONF messages
-    - `CLICON_CLI_OUTPUT_FORMAT` - Default CLI output format
-    - `CLICON_AUTOLOCK` - Implicit locks
+    - `CLICON_XMLDB_MULTIPLE`: Split datastore into multiple sub files
+    - `CLICON_NETCONF_DUPLICATE_ALLOW`: Disable duplicate check in NETCONF messages
+    - `CLICON_CLI_OUTPUT_FORMAT`: Default CLI output format
+    - `CLICON_AUTOLOCK`: Implicit locks
 * New `clixon-lib@2024-04-01.yang` revision
     - Added: Default format
 

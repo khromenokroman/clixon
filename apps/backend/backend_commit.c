@@ -251,7 +251,10 @@ startup_common(clixon_handle       h,
         /* clear XML tree of defaults */
         if (xml_tree_prune_flagged(xt, XML_FLAG_DEFAULT, 1) < 0)
             goto done;
-        if (xmldb_dump(h, stdout, xt, WITHDEFAULTS_REPORT_ALL) < 0)
+
+        if (xmldb_dump(h, stdout, xt, FORMAT_XML,
+                       clicon_option_bool(h, "CLICON_XMLDB_PRETTY"),
+                       WITHDEFAULTS_REPORT_ALL, 0, NULL) < 0)
             goto done;
         if (xt)
             xml_free(xt);
@@ -495,17 +498,8 @@ validate_common(clixon_handle       h,
     if (xmldb_cache_get(h, db) != NULL){
         if (xmldb_populate(h, db) < 0)
             goto done;
-#ifdef DATASTORE_MULTIPLE
-        if (strcmp("json", clicon_option_str(h, "CLICON_XMLDB_FORMAT")) == 0){ // XXX JSON
-            if (xmldb_write_cache2file(h, db) < 0)
-                goto done;
-        }
-        else if (xmldb_write_cache2file_multi(h, db) < 0)
-            goto done;
-#else
         if (xmldb_write_cache2file(h, db) < 0)
             goto done;
-#endif
     }
     /* This is the state we are going to */
     if ((ret = xmldb_get0(h, db, YB_MODULE, NULL, "/", 0, 0, &td->td_target, NULL, xret)) < 0)
