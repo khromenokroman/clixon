@@ -144,6 +144,7 @@ jobs:
       run: ./start.sh
     - name: run test r-y
       run: sudo docker exec -t clixon-test bash -c 'cd /usr/local/bin/test && detail=true pattern="test_r*.sh test_s*.sh test_t*.sh test_u*.sh test_w*.sh test_x*.sh test_y*.sh" ./sum.sh'
+
   docker-alpine-tests-fcgi-r
     runs-on: ubuntu-latest
     defaults:
