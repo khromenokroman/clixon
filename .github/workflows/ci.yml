@@ -52,7 +52,7 @@ jobs:
     - name: install example
       run: (cd example; sudo make install)
 
-  docker-alpine-tests-a-m:
+  docker-alpine-tests-a-m,p:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -80,10 +80,10 @@ jobs:
       run: sudo docker build -f Dockerfile.native -t clixon/clixon-test  .
     - name: start container
       run: ./start.sh
-    - name: run test a-m
-      run: sudo docker exec -t clixon-test bash -c 'cd /usr/local/bin/test && detail=true pattern="test_a*.sh test_c*.sh test_d*.sh test_f*.sh test_h*.sh test_i*.sh test_j*.sh test_l*.sh test_m*.sh" ./sum.sh'
+    - name: run test a-m,p
+      run: sudo docker exec -t clixon-test bash -c 'cd /usr/local/bin/test && detail=true pattern="test_a*.sh test_c*.sh test_d*.sh test_f*.sh test_h*.sh test_i*.sh test_j*.sh test_l*.sh test_m*.sh  test_p*.sh" ./sum.sh'
 
-  docker-alpine-tests-n-p:
+  docker-alpine-tests-n-o:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -111,8 +111,8 @@ jobs:
       run: sudo docker build -f Dockerfile.native -t clixon/clixon-test  .
     - name: start container
       run: ./start.sh
-    - name: run test n-p
-      run: sudo docker exec -t clixon-test bash -c 'cd /usr/local/bin/test && detail=true pattern="test_n*.sh test_o*.sh test_p*.sh" ./sum.sh'
+    - name: run test n-o
+      run: sudo docker exec -t clixon-test bash -c 'cd /usr/local/bin/test && detail=true pattern="test_n*.sh test_o*.sh" ./sum.sh'
 
   docker-alpine-tests-r-z:
     runs-on: ubuntu-latest
@@ -144,3 +144,19 @@ jobs:
       run: ./start.sh
     - name: run test r-y
       run: sudo docker exec -t clixon-test bash -c 'cd /usr/local/bin/test && detail=true pattern="test_r*.sh test_s*.sh test_t*.sh test_u*.sh test_w*.sh test_x*.sh test_y*.sh" ./sum.sh'
+  docker-alpine-tests-fcgi-r
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./docker/test
+    steps:
+    - uses: actions/checkout@v4
+    # 2) Inline of make test, but without configure
+    - name: in-line clone
+      run: git clone file://$(realpath ../..)
+    - name: make docker fcgi
+      run: sudo docker build -f Dockerfile.fcgi -t clixon/clixon-test  .
+    - name: start container
+      run: ./start.sh
+    - name: run test r-y
+      run: sudo docker exec -t clixon-test bash -c 'cd /usr/local/bin/test && detail=true pattern="test_r*.sh" ./sum.sh'
