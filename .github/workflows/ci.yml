@@ -52,7 +52,7 @@ jobs:
     - name: install example
       run: (cd example; sudo make install)
 
-  docker-alpine-tests-a-m,p:
+  docker-alpine-tests-a-mp:
     runs-on: ubuntu-latest
     defaults:
       run:
